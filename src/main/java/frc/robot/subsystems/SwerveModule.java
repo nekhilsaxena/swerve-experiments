@@ -75,8 +75,6 @@ public class SwerveModule {
         desiredAngle = normDesired;
         desiredSpeed = speedMps;
 
-        if (simMode) return;
-
         double driveRPS = (speedMps / SwerveConstants.WHEEL_CIRCUMFERENCE) * SwerveConstants.DRIVE_GEAR_RATIO;
 
         driveMotor.setControl(driveControl.withVelocity(driveRPS));
