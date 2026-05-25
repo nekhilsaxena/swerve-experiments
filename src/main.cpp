@@ -5,261 +5,378 @@
 #include <vector>
 #include <string>
 #include <iomanip>
+#include <optional>
+#include <iostream>
 
 #include "Physics.h"
 #include "SwerveModule.h"
 #include "SwerveDrive.h"
+#include "DriveRequest.h"
+#include "SwerveDriveUtil.h"
+#include "AutonomousRoutines.h"
+#include "Constants.h"
+#include "CommandScheduler.h"
+#include "DrivetrainCommands.h"
 
 using namespace Physics;
 
-class SwerveVisualizer : public olc::PixelGameEngine {
+// Dashboard Button Helper
+struct Button {
+    int x;
+    int y;
+    int w;
+    int h;
+    std::string label;
+    olc::Pixel normalColor{60, 60, 60};
+    olc::Pixel hoverColor{90, 90, 90};
+    olc::Pixel activeColor{130, 130, 130};
+
+    bool isHovered(int mx, int my) const {
+        return mx >= x && mx < x + w && my >= y && my < y + h;
+    }
+
+    void draw(olc::PixelGameEngine* pge, int mx, int my, bool isPressed) const {
+        olc::Pixel color = normalColor;
+        if (isHovered(mx, my)) {
+            color = isPressed ? activeColor : hoverColor;
+        }
+        pge->FillRect(x, y, w, h, color);
+        pge->DrawRect(x, y, w, h, olc::WHITE);
+
+        olc::vi2d textSize = pge->GetTextSize(label);
+        int tx = x + (w - textSize.x) / 2;
+        int ty = y + (h - textSize.y) / 2;
+        pge->DrawString(tx, ty, label, olc::WHITE);
+    }
+};
+
+class SwerveVisualizer : public olc::PixelGameEngine
+{
 public:
-    SwerveVisualizer() {
+    SwerveVisualizer()
+    {
         sAppName = "Swerve Drive Simulator";
     }
 
 private:
     std::unique_ptr<SwerveDrive> robot;
-    SwerveDrive::Config driveConfig;
-    std::vector<SwerveModule::Config> moduleConfigs;
-    
-    float fScale = 100.0f;
+    std::unique_ptr<SwerveDriveUtil> driveUtil;
+
+    float fScale = Constants::Simulation::SCALE_PX_PER_M;
     olc::vf2d vOffset = {400, 400};
+    float fSimStep = (float)Constants::Simulation::PHYSICS_DT;
 
-    struct InputState {
-        float vx = 0;
-        float vy = 0;
-        float omega = 0;
-    } currentInput;
+    // UI Buttons
+    std::vector<Button> buttons;
 
-    std::vector<std::pair<double, double>> currentControls;
+    // Click target for grid right-clicking (stored as state, re-submitted every frame)
+    std::optional<Physics::Vector2> clickTarget;
+    double clickTargetHeading{0.0};
+
+    // Active autonomous command and display tracking
+    std::shared_ptr<Command> m_activeAutonCommand;
+    std::vector<AutonWaypoint> m_activeWaypoints;
+    std::string m_activeAutonName{"None"};
 
 public:
-    bool OnUserCreate() override {
-        // 1. Robot Setup (Identical physics setup)
-        DCMotor driveMotor(6000, 4.69, 255, 1.5, 12.0); 
-        DCMotor steerMotor(6000, 2.0, 100, 1.5, 12.0); 
+    bool OnUserCreate() override
+    {
+        robot = std::make_unique<SwerveDrive>(Pose{Vector2(0, 0), 0});
+        driveUtil = std::make_unique<SwerveDriveUtil>(*robot);
 
-        SwerveModule::Config modConfig;
-        modConfig.driveMotor = driveMotor;
-        modConfig.steerMotor = steerMotor;
-        modConfig.driveGearRatio = 6.75;
-        modConfig.steerGearRatio = 12.8; 
-        modConfig.wheelRadius = 0.0508; 
-        modConfig.massOnWheel = 50.0 / 4.0; 
-        modConfig.wheelMOI = 0.005; 
-        modConfig.moduleMOI = 0.05; 
-        modConfig.coffFriction = 1.1; 
-        modConfig.steerFriction = 0.1; 
-        modConfig.position = Vector2(0,0);
-
-        double hw = 0.6 / 2.0; 
-        moduleConfigs.assign(4, modConfig);
-        moduleConfigs[0].position = Vector2(hw, hw);   // FL
-        moduleConfigs[1].position = Vector2(hw, -hw);  // FR
-        moduleConfigs[2].position = Vector2(-hw, hw);  // BL
-        moduleConfigs[3].position = Vector2(-hw, -hw); // BR
-
-        driveConfig.mass = 50.0;
-        driveConfig.moi = 5.0; 
-        driveConfig.modules = moduleConfigs;
-
-        robot = std::make_unique<SwerveDrive>(driveConfig, Pose{Vector2(0,0), 0});
-        currentControls.assign(4, {0.0, 0.0});
+        // Dashboard buttons (Row 1: S-Curve & Square, Row 2: P2P & Cancel)
+        buttons = {
+            { 820, 580, 170, 32, "S-Curve Auton" },
+            { 1005, 580, 170, 32, "Square Auton" },
+            { 820, 625, 170, 32, "P2P Auton" },
+            { 1005, 625, 170, 32, "Cancel Auton" }
+        };
 
         return true;
     }
 
-    bool OnUserUpdate(float fElapsedTime) override {
-        // --- INPUT HANDLING ---
+    bool OnUserUpdate(float fElapsedTime) override
+    {
+        // INPUT HANDLING
         float targetVx = 0, targetVy = 0, targetOmega = 0;
-        float speed = 2.5f;
-        float rotSpeed = 3.0f;
+        float speed = Constants::Simulation::DRIVE_SPEED_MPS;
+        float rotSpeed = Constants::Simulation::ROTATE_SPEED_RADS;
 
-        if (GetKey(olc::Key::UP).bHeld) targetVx += speed;
-        if (GetKey(olc::Key::DOWN).bHeld) targetVx -= speed;
-        if (GetKey(olc::Key::LEFT).bHeld) targetVy += speed;
-        if (GetKey(olc::Key::RIGHT).bHeld) targetVy -= speed;
-        if (GetKey(olc::Key::Q).bHeld) targetOmega += rotSpeed;
-        if (GetKey(olc::Key::E).bHeld) targetOmega -= rotSpeed;
-        if (GetKey(olc::Key::X).bPressed) { targetVx = 0; targetVy = 0; targetOmega = 0; }
+        bool teleopInputActive = false;
+        if (GetKey(olc::Key::UP).bHeld) { targetVx += speed; teleopInputActive = true; }
+        if (GetKey(olc::Key::DOWN).bHeld) { targetVx -= speed; teleopInputActive = true; }
+        if (GetKey(olc::Key::LEFT).bHeld) { targetVy += speed; teleopInputActive = true; }
+        if (GetKey(olc::Key::RIGHT).bHeld) { targetVy -= speed; teleopInputActive = true; }
+        if (GetKey(olc::Key::Q).bHeld) { targetOmega += rotSpeed; teleopInputActive = true; }
+        if (GetKey(olc::Key::E).bHeld) { targetOmega -= rotSpeed; teleopInputActive = true; }
 
-        // Simple Ramping / Input Smoothing for a "Complete Project" feel
-        float lerpRate = 15.0f * fElapsedTime; 
-        currentInput.vx += (targetVx - currentInput.vx) * std::min(1.0f, lerpRate);
-        currentInput.vy += (targetVy - currentInput.vy) * std::min(1.0f, lerpRate);
-        currentInput.omega += (targetOmega - currentInput.omega) * std::min(1.0f, lerpRate);
+        // If manual controls are touched, cancel running commands
+        if (teleopInputActive) {
+            if (clickTarget.has_value()) {
+                clickTarget = std::nullopt;
+                driveUtil->resetToIdle();
+            }
+            CommandScheduler::getInstance().cancelAll();
+            m_activeAutonCommand.reset();
+            m_activeWaypoints.clear();
+            m_activeAutonName = "None";
+        }
 
-        // --- PHYSICS STEPPING ---
-        float fSimStep = 0.01f;
+        // Emergency stop — also cancels autonomous and target PID
+        if (GetKey(olc::Key::X).bPressed)
+        {
+            CommandScheduler::getInstance().cancelAll();
+            m_activeAutonCommand.reset();
+            m_activeWaypoints.clear();
+            m_activeAutonName = "None";
+            clickTarget = std::nullopt;
+            driveUtil->emergencyStop();
+        }
+
+        // Handle Dashboard Button Clicks
+        if (GetMouse(0).bPressed) {
+            int mx = GetMouseX();
+            int my = GetMouseY();
+            for (size_t i = 0; i < buttons.size(); i++) {
+                if (buttons[i].isHovered(mx, my)) {
+                    clickTarget = std::nullopt; // Clear target click if starting auton
+                    CommandScheduler::getInstance().cancelAll();
+                    m_activeAutonCommand.reset();
+                    m_activeWaypoints.clear();
+                    m_activeAutonName = "None";
+
+                    if (i == 0) {
+                        auto r = std::make_unique<SCurveRoutine>();
+                        m_activeAutonName = r->getName();
+                        m_activeWaypoints = r->getWaypoints();
+                        m_activeAutonCommand = r->getCommand(robot.get(), driveUtil.get());
+                        CommandScheduler::getInstance().schedule(m_activeAutonCommand);
+                    } else if (i == 1) {
+                        auto r = std::make_unique<SquareRoutine>();
+                        m_activeAutonName = r->getName();
+                        m_activeWaypoints = r->getWaypoints();
+                        m_activeAutonCommand = r->getCommand(robot.get(), driveUtil.get());
+                        CommandScheduler::getInstance().schedule(m_activeAutonCommand);
+                    } else if (i == 2) {
+                        auto r = std::make_unique<PointToPointRoutine>();
+                        m_activeAutonName = r->getName();
+                        m_activeWaypoints = r->getWaypoints();
+                        m_activeAutonCommand = r->getCommand(robot.get(), driveUtil.get());
+                        CommandScheduler::getInstance().schedule(m_activeAutonCommand);
+                    } else if (i == 3) {
+                        driveUtil->resetToIdle();
+                    }
+                }
+            }
+        }
+
+        // Right Click on Grid to PID — store target
+        if (GetMouse(1).bPressed && GetMouseX() <= 800) {
+            CommandScheduler::getInstance().cancelAll();
+            m_activeAutonCommand.reset();
+            m_activeWaypoints.clear();
+            m_activeAutonName = "None";
+            double worldX = (double)(GetMouseX() - vOffset.x) / fScale;
+            double worldY = (double)(vOffset.y - GetMouseY()) / fScale;
+            clickTarget = Physics::Vector2(worldX, worldY);
+            clickTargetHeading = robot->getState().pose.rotation; // hold current heading
+        }
+
+        // Per-frame drive command priority:
+        //   1. Auton (handled via command scheduler running in physics loop)
+        //   2. Click-target PID
+        //   3. Teleop
+        if (!CommandScheduler::getInstance().hasActiveCommands()) {
+            if (clickTarget.has_value()) {
+                DriveRequest req;
+                req.mode            = DriveMode::TARGET_POSE;
+                req.priority        = RequestPriority::ALIGNMENT;
+                req.translation     = {0, 0};
+                req.rotation        = 0;
+                req.targetPosition  = clickTarget;
+                req.targetHeading   = clickTargetHeading;
+                req.rampTimeSeconds = 0.0;
+                req.source          = "GRID_CLICK";
+                req.isActive        = true;
+                driveUtil->submitRequest(req);
+            } else {
+                driveUtil->submitRequest(DriveRequest::teleop(targetVx, targetVy, targetOmega));
+            }
+        }
+
+        // PHYSICS STEPPING
         static float fAccumulator = 0.0f;
         fAccumulator += fElapsedTime;
 
-        // Caps to prevent "Spiral of Death" if debugger is paused or lag occurs
-        if (fAccumulator > 0.1f) fAccumulator = 0.1f;
+        // Caps to prevent "Spiral of Death"
+        if (fAccumulator > Constants::Simulation::MAX_ACCUMULATOR)
+        {
+            fAccumulator = Constants::Simulation::MAX_ACCUMULATOR;
+        }
 
-        while (fAccumulator >= fSimStep) {
-            UpdatePhysics(fSimStep);
+        while (fAccumulator >= fSimStep)
+        {
+            // Update scheduled commands
+            CommandScheduler::getInstance().run(fSimStep);
+
+            // Clean up visual references if command group finished
+            if (m_activeAutonCommand && !CommandScheduler::getInstance().hasActiveCommands()) {
+                m_activeAutonCommand.reset();
+                m_activeWaypoints.clear();
+                m_activeAutonName = "None";
+            }
+
+            driveUtil->update(fSimStep);
+            robot->update(fSimStep);
+
+            static int debugCounter = 0;
+            debugCounter++;
+            if (debugCounter % 50 == 0)
+            {
+                std::cout << "[DEBUG] Robot Pose: (" << robot->getState().pose.position.x
+                          << ", " << robot->getState().pose.position.y << "), Head: "
+                          << robot->getState().pose.rotation << "\n";
+            }
+
             fAccumulator -= fSimStep;
         }
 
-        // --- DRAWING ---
+        // DRAWING
         Clear(olc::Pixel(20, 20, 20));
 
         // 1. Grid
-        for (int x = 0; x <= 800; x += (int)fScale) DrawLine(x, 0, x, ScreenHeight(), olc::Pixel(45, 45, 45));
-        for (int y = 0; y <= ScreenHeight(); y += (int)fScale) DrawLine(0, y, 800, y, olc::Pixel(45, 45, 45));
+        for (int x = 0; x <= 800; x += (int)fScale)
+            DrawLine(x, 0, x, ScreenHeight(), olc::Pixel(45, 45, 45));
+        for (int y = 0; y <= ScreenHeight(); y += (int)fScale)
+            DrawLine(0, y, 800, y, olc::Pixel(45, 45, 45));
 
-        // 2. Robot
+        // 2. Waypoints / Paths / Targets
+        DrawAutonPathAndTarget();
+
+        // 3. Robot
         DrawRobot();
 
-        // 3. UI Dashboard
+        // 4. UI Dashboard
         DrawDashboard();
 
         return true;
     }
 
 private:
-    void UpdatePhysics(float dt) {
-        double angle = robot->getState().pose.rotation;
-        double cosA = std::cos(-angle);
-        double sinA = std::sin(-angle);
-        
-        // Field oriented transformation
-        double sigVx = currentInput.vx * cosA - currentInput.vy * sinA;
-        double sigVy = currentInput.vx * sinA + currentInput.vy * cosA;
-        
-        auto& modules = robot->getModules();
-        static double lastDesAngle[4] = {0, 0, 0, 0};
-
-        for (size_t i = 0; i < 4; ++i) {
-            Vector2 r = moduleConfigs[i].position;
-            Vector2 v_rot(-r.y, r.x);
-            Vector2 v_mod(sigVx, sigVy);
-            v_mod = v_mod + v_rot * currentInput.omega;
-
-            double desSpeed = v_mod.magnitude();
-            double desAngle = lastDesAngle[i];
-
-            // DEAD BAND & ANGLE LATCHING:
-            // Only update steering angle if we are actually trying to move or if the module is spinning fast.
-            // This prevents the "jitter" where modules snap to 0 deg when robot stops.
-            if (desSpeed > 0.05) {
-                desAngle = std::atan2(v_mod.y, v_mod.x);
-                lastDesAngle[i] = desAngle;
-            }
-
-            double curAngle = modules[i].getState().steerAngle;
-            
-            // Standard Swerve Optimization (find shortest path)
-            double delta = desAngle - curAngle;
-            while (delta > M_PI) delta -= 2 * M_PI;
-            while (delta < -M_PI) delta += 2 * M_PI;
-            
-            if (std::abs(delta) > M_PI / 2.0) {
-                desAngle += M_PI;
-                desSpeed *= -1.0;
-            }
-            
-            double error = desAngle - curAngle;
-            while (error > M_PI) error -= 2 * M_PI;
-            while (error < -M_PI) error += 2 * M_PI;
-
-            // PID Tuning (Simple P for now)
-            double steerV = error * 15.0; // Slightly stiffer steering
-            double driveV = desSpeed * 2.8; 
-            
-            // DEAD BAND for voltages to stop resting jitter
-            if (std::abs(driveV) < 0.1) driveV = 0.0;
-            if (std::abs(steerV) < 0.05) steerV = 0.0;
-
-            // Clamp Physical Limits
-            if (steerV > 12) steerV = 12; if (steerV < -12) steerV = -12;
-            if (driveV > 12) driveV = 12; if (driveV < -12) driveV = -12;
-
-            currentControls[i] = {driveV, steerV};
-        }
-
-        robot->update(dt, currentControls);
+    void DrawRobot()
+    {
+        robot->draw(this, fScale, vOffset);
     }
 
-    void DrawRobot() {
-        auto state = robot->getState();
-        olc::vf2d pos = { (float)state.pose.position.x * fScale, (float)-state.pose.position.y * fScale };
-        pos += vOffset;
-
-        float angle = (float)-state.pose.rotation;
-        float size = 0.6f * fScale;
-
-        auto Rotate = [&](float x, float y, float a) {
-            return olc::vf2d{ x * cosf(a) - y * sinf(a), x * sinf(a) + y * cosf(a) };
-        };
-
-        // Draw Body Square
-        olc::vf2d p1 = pos + Rotate(-size / 2, -size / 2, angle);
-        olc::vf2d p2 = pos + Rotate(size / 2, -size / 2, angle);
-        olc::vf2d p3 = pos + Rotate(size / 2, size / 2, angle);
-        olc::vf2d p4 = pos + Rotate(-size / 2, size / 2, angle);
-
-        DrawLine(p1, p2, olc::Pixel(78, 201, 176));
-        DrawLine(p2, p3, olc::Pixel(78, 201, 176));
-        DrawLine(p3, p4, olc::Pixel(78, 201, 176));
-        DrawLine(p4, p1, olc::Pixel(78, 201, 176));
-        
-        // Heading arrow
-        olc::vf2d head = pos + Rotate(size / 2, 0, angle);
-        DrawLine(pos, head, olc::WHITE);
-
-        // Modules
-        auto& modules = robot->getModules();
-        for (int i = 0; i < 4; i++) {
-            olc::vf2d modPos = pos + Rotate((float)moduleConfigs[i].position.x * fScale, (float)-moduleConfigs[i].position.y * fScale, angle);
-            float steer = (float)-modules[i].getState().steerAngle + angle;
+    void DrawAutonPathAndTarget()
+    {
+        // Draw right-click target position
+        if (clickTarget.has_value()) {
+            int tx = clickTarget->x * fScale + vOffset.x;
+            int ty = -clickTarget->y * fScale + vOffset.y;
             
-            olc::vf2d w1 = modPos + Rotate(-10, -5, steer);
-            olc::vf2d w2 = modPos + Rotate(10, -5, steer);
-            olc::vf2d w3 = modPos + Rotate(10, 5, steer);
-            olc::vf2d w4 = modPos + Rotate(-10, 5, steer);
-            
-            DrawLine(w1, w2, olc::Pixel(206, 145, 120));
-            DrawLine(w2, w3, olc::Pixel(206, 145, 120));
-            DrawLine(w3, w4, olc::Pixel(206, 145, 120));
-            DrawLine(w4, w1, olc::Pixel(206, 145, 120));
+            // Glowing cyan crosshair and target circles
+            DrawCircle(tx, ty, 6, olc::CYAN);
+            DrawCircle(tx, ty, 2, olc::CYAN);
+            DrawLine(tx - 10, ty, tx + 10, ty, olc::CYAN);
+            DrawLine(tx, ty - 10, tx, ty + 10, olc::CYAN);
+            DrawString(tx + 12, ty - 12, "TARGET", olc::CYAN);
+        }
 
-            // Speed vector
-            olc::vf2d vec = Rotate((float)modules[i].getState().wheelSpeed * 10.0f, 0, steer);
-            DrawLine(modPos, modPos + vec, olc::Pixel(220, 220, 170));
+        // Draw autonomous waypoints and paths
+        if (!m_activeWaypoints.empty()) {
+            for (size_t i = 0; i < m_activeWaypoints.size(); i++) {
+                int wx = m_activeWaypoints[i].position.x * fScale + vOffset.x;
+                int wy = -m_activeWaypoints[i].position.y * fScale + vOffset.y;
+                
+                // Waypoint nodes
+                FillCircle(wx, wy, 4, olc::Pixel(255, 165, 0)); // orange/tangerine
+                DrawCircle(wx, wy, 8, olc::Pixel(255, 165, 0));
+                DrawString(wx + 10, wy - 10, "W" + std::to_string(i), olc::Pixel(255, 165, 0));
+
+                // Line connecting to next waypoint
+                if (i < m_activeWaypoints.size() - 1) {
+                    int nwx = m_activeWaypoints[i+1].position.x * fScale + vOffset.x;
+                    int nwy = -m_activeWaypoints[i+1].position.y * fScale + vOffset.y;
+                    DrawLine(wx, wy, nwx, nwy, olc::Pixel(255, 165, 0, 100)); // semi-transparent
+                }
+            }
         }
     }
 
-    void DrawDashboard() {
+    void DrawDashboard()
+    {
         int x = 820;
         DrawString(x, 20, "Swerve Standalone", olc::WHITE, 2);
-        
-        DrawString(x, 60, "Controls:", olc::GREY);
-        DrawString(x, 80, "Arrows: Move, Q/E: Rotate, X: Stop", olc::WHITE);
 
-        DrawString(x, 120, "User Input:", olc::CYAN);
-        DrawString(x, 140, "Vx: " + std::to_string(currentInput.vx), olc::WHITE);
-        DrawString(x, 160, "Vy: " + std::to_string(currentInput.vy), olc::WHITE);
-        DrawString(x, 180, "Rot: " + std::to_string(currentInput.omega), olc::WHITE);
+        DrawString(x, 60, "Controls:", olc::GREY);
+        DrawString(x, 80, "Arrows: Drive  Q/E: Rotate  X: Stop", olc::WHITE);
+        DrawString(x, 95, "Right Click Grid: Go to Target", olc::WHITE);
+
+        auto smoothedTrans = driveUtil->getSmoothedTranslation();
+        double smoothedRot = driveUtil->getSmoothedRotation();
+        DrawString(x, 130, "Drive Input (Smoothed):", olc::CYAN);
+        DrawString(x, 150, "Vx: " + std::to_string(smoothedTrans.x), olc::WHITE);
+        DrawString(x, 165, "Vy: " + std::to_string(smoothedTrans.y), olc::WHITE);
+        DrawString(x, 180, "Rot: " + std::to_string(smoothedRot), olc::WHITE);
 
         auto state = robot->getState();
-        DrawString(x, 220, "Robot State:", olc::GREEN);
-        DrawString(x, 240, "X: " + std::to_string(state.pose.position.x), olc::WHITE);
-        DrawString(x, 260, "Y: " + std::to_string(state.pose.position.y), olc::WHITE);
-        DrawString(x, 280, "H: " + std::to_string(state.pose.rotation * 180.0 / M_PI), olc::WHITE);
+        DrawString(x, 210, "Robot State:", olc::GREEN);
+        DrawString(x, 230, "X: " + std::to_string(state.pose.position.x), olc::WHITE);
+        DrawString(x, 245, "Y: " + std::to_string(state.pose.position.y), olc::WHITE);
+        DrawString(x, 260, "H: " + std::to_string(state.pose.rotation * 180.0 / M_PI), olc::WHITE);
 
-        DrawString(x, 320, "Modules (Drive V / Steer V):", olc::YELLOW);
-        const char* names[] = {"FL", "FR", "BL", "BR"};
-        for (int i = 0; i < 4; i++) {
-            int y = 340 + i * 20;
-            DrawString(x, y, std::string(names[i]) + ": " + std::to_string(currentControls[i].first).substr(0,4) + "V / " + std::to_string(currentControls[i].second).substr(0,4) + "V");
+        DrawString(x, 290, "Modules (Drive V / Steer V):", olc::YELLOW);
+        const char *names[] = {"FL", "FR", "BL", "BR"};
+        auto &voltages = robot->getModuleVoltages();
+        for (int i = 0; i < 4; i++)
+        {
+            int y = 310 + i * 15;
+            DrawString(x, y, std::string(names[i]) + ": " + std::to_string(voltages[i].first).substr(0, 5) + "V / " + std::to_string(voltages[i].second).substr(0, 5) + "V");
+        }
+
+        DrawString(x, 380, "Request System:", olc::Pixel(180, 130, 255));
+        auto curReq = driveUtil->getCurrentRequest();
+        DrawString(x, 400, "Source: " + curReq.source, olc::WHITE);
+        DrawString(x, 415, "Priority: " + std::to_string(static_cast<int>(curReq.priority)), olc::WHITE);
+        DrawString(x, 430, "Queue: " + std::to_string(driveUtil->queueSize()), olc::WHITE);
+        int blendPct = static_cast<int>(driveUtil->getTransitionProgress() * 100);
+        DrawString(x, 445, "Blend: " + std::to_string(blendPct) + "%", olc::WHITE);
+
+        bool running = (m_activeAutonCommand != nullptr);
+        olc::Pixel autoColor = running ? olc::Pixel(120, 255, 120) : olc::Pixel(120, 120, 120);
+        DrawString(x, 480, "Autonomous & Control UI:", olc::Pixel(255, 200, 80));
+        
+        std::string statusStr = "None";
+        if (running) {
+            statusStr = m_activeAutonName + " [" + m_activeAutonCommand->getStatus() + "]";
+        }
+        DrawString(x, 500, "Routine: " + statusStr, autoColor);
+        if (running)
+        {
+            double progress = m_activeAutonCommand->getProgress();
+            int pct = static_cast<int>(progress * 100);
+            DrawString(x, 515, "Progress: " + std::to_string(pct) + "%", autoColor);
+            int barW = 350;
+            int barH = 8;
+            int barX = x;
+            int barY = 532;
+            DrawRect(barX, barY, barW, barH, olc::Pixel(80, 80, 80));
+            FillRect(barX + 1, barY + 1, static_cast<int>(barW * progress), barH - 1, autoColor);
+        }
+
+        // Draw buttons
+        int mx = GetMouseX();
+        int my = GetMouseY();
+        bool isPressed = GetMouse(0).bHeld;
+        for (const auto& btn : buttons) {
+            btn.draw(this, mx, my, isPressed);
         }
     }
 };
 
-int main() {
+int main()
+{
     SwerveVisualizer demo;
     if (demo.Construct(1200, 800, 1, 1))
         demo.Start();

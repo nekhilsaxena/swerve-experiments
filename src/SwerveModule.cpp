@@ -74,6 +74,8 @@ Physics::Vector2 SwerveModule::update(double dt, double driveVolts, double steer
         f_friction = f_friction.normalized() * maxFriction;
     }
 
+
+
     // Forces acting ON THE ROBOT CHASSIS
     // The ground pushes the wheel with f_friction.
     // So the force on chassis is f_friction.
