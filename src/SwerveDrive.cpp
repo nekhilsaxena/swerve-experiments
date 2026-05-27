@@ -3,12 +3,13 @@
 #include <cmath>
 #include <iostream>
 
-SwerveDrive::SwerveDrive(Physics::Pose initialPose) {
+SwerveDrive::SwerveDrive(Physics::Pose initialPose)
+{
     state.pose = initialPose;
     state.velocity = {0, 0};
     state.angularVelocity = 0;
 
-    // Auto-configure using Constants
+    // Configuration from Constants
     config.mass = Constants::Robot::MASS_KG;
     config.moi = Constants::Robot::MOI_KGM2;
 
@@ -17,15 +18,13 @@ SwerveDrive::SwerveDrive(Physics::Pose initialPose) {
         Constants::Motor::DRIVE_STALL_TORQUE_NM,
         Constants::Motor::DRIVE_MAX_CURRENT_A,
         Constants::Motor::DRIVE_FREE_CURRENT_A,
-        Constants::Motor::DRIVE_NOMINAL_VOLTAGE
-    );
+        Constants::Motor::DRIVE_NOMINAL_VOLTAGE);
     Physics::DCMotor steerMotor(
         Constants::Motor::STEER_FREE_SPEED_RPM,
         Constants::Motor::STEER_STALL_TORQUE_NM,
         Constants::Motor::STEER_MAX_CURRENT_A,
         Constants::Motor::STEER_FREE_CURRENT_A,
-        Constants::Motor::STEER_NOMINAL_VOLTAGE
-    );
+        Constants::Motor::STEER_NOMINAL_VOLTAGE);
 
     SwerveModule::Config modConfig;
     modConfig.driveMotor = driveMotor;
@@ -40,59 +39,60 @@ SwerveDrive::SwerveDrive(Physics::Pose initialPose) {
     modConfig.steerFriction = Constants::Module::STEER_FRICTION;
 
     double hw = Constants::Robot::WHEEL_BASE_M / 2.0;
-    
+
     // FL
     modConfig.position = Physics::Vector2(hw, hw);
     config.modules.push_back(modConfig);
-    
+
     // FR
     modConfig.position = Physics::Vector2(hw, -hw);
     config.modules.push_back(modConfig);
-    
+
     // BL
     modConfig.position = Physics::Vector2(-hw, hw);
     config.modules.push_back(modConfig);
-    
+
     // BR
     modConfig.position = Physics::Vector2(-hw, -hw);
     config.modules.push_back(modConfig);
 
-    for (const auto& mConfig : config.modules) {
+    for (const auto &mConfig : config.modules)
+    {
         modules.emplace_back(mConfig);
     }
     m_computedControls.assign(modules.size(), {0.0, 0.0});
 
-    // Initialize PID Controllers with Constants
-    for (size_t i = 0; i < 4; ++i) {
+    for (size_t i = 0; i < 4; ++i)
+    {
         m_steerPIDs[i] = PIDController(
             Constants::SteerPID::kP,
             Constants::SteerPID::kI,
             Constants::SteerPID::kD,
             Constants::SteerPID::MAX_VOLTAGE,
-            Constants::SteerPID::DEADBAND
-        );
+            Constants::SteerPID::DEADBAND);
         m_drivePIDs[i] = PIDController(
             Constants::DrivePID::kP,
             Constants::DrivePID::kI,
             Constants::DrivePID::kD,
             Constants::DrivePID::MAX_VOLTAGE,
-            Constants::DrivePID::DEADBAND
-        );
+            Constants::DrivePID::DEADBAND);
     }
 }
 
-void SwerveDrive::draw(olc::PixelGameEngine* pge, float scale, olc::vf2d offset) const {
-    olc::vf2d pos = { (float)state.pose.position.x * scale, (float)-state.pose.position.y * scale };
+void SwerveDrive::draw(olc::PixelGameEngine *pge, float scale, olc::vf2d offset) const
+{
+    olc::vf2d pos = {(float)state.pose.position.x * scale, (float)-state.pose.position.y * scale};
     pos += offset;
 
     float angle = (float)-state.pose.rotation;
     float size = 0.6f * scale;
 
-    auto Rotate = [&](float x, float y, float a) {
-        return olc::vf2d{ x * cosf(a) - y * sinf(a), x * sinf(a) + y * cosf(a) };
+    auto Rotate = [&](float x, float y, float a)
+    {
+        return olc::vf2d{x * cosf(a) - y * sinf(a), x * sinf(a) + y * cosf(a)};
     };
 
-    // Draw Body Square
+    // Body Square
     olc::vf2d p1 = pos + Rotate(-size / 2, -size / 2, angle);
     olc::vf2d p2 = pos + Rotate(size / 2, -size / 2, angle);
     olc::vf2d p3 = pos + Rotate(size / 2, size / 2, angle);
@@ -102,21 +102,22 @@ void SwerveDrive::draw(olc::PixelGameEngine* pge, float scale, olc::vf2d offset)
     pge->DrawLine(p2, p3, olc::Pixel(78, 201, 176));
     pge->DrawLine(p3, p4, olc::Pixel(78, 201, 176));
     pge->DrawLine(p4, p1, olc::Pixel(78, 201, 176));
-    
+
     // Heading arrow
     olc::vf2d head = pos + Rotate(size / 2, 0, angle);
     pge->DrawLine(pos, head, olc::WHITE);
 
     // Modules
-    for (size_t i = 0; i < modules.size(); i++) {
+    for (size_t i = 0; i < modules.size(); i++)
+    {
         olc::vf2d modPos = pos + Rotate((float)config.modules[i].position.x * scale, (float)-config.modules[i].position.y * scale, angle);
         float steer = (float)-modules[i].getState().steerAngle + angle;
-        
+
         olc::vf2d w1 = modPos + Rotate(-10, -5, steer);
         olc::vf2d w2 = modPos + Rotate(10, -5, steer);
         olc::vf2d w3 = modPos + Rotate(10, 5, steer);
         olc::vf2d w4 = modPos + Rotate(-10, 5, steer);
-        
+
         pge->DrawLine(w1, w2, olc::Pixel(206, 145, 120));
         pge->DrawLine(w2, w3, olc::Pixel(206, 145, 120));
         pge->DrawLine(w3, w4, olc::Pixel(206, 145, 120));
@@ -128,21 +129,26 @@ void SwerveDrive::draw(olc::PixelGameEngine* pge, float scale, olc::vf2d offset)
     }
 }
 
-void SwerveDrive::setInput(double vx, double vy, double omega) {
+void SwerveDrive::setInput(double vx, double vy, double omega)
+{
     m_inputVx = vx;
     m_inputVy = vy;
     m_inputOmega = omega;
 }
 
-void SwerveDrive::resetPIDs() {
-    for (size_t i = 0; i < 4; ++i) {
+void SwerveDrive::resetPIDs()
+{
+    for (size_t i = 0; i < 4; ++i)
+    {
         m_steerPIDs[i].reset();
         m_drivePIDs[i].reset();
     }
 }
 
-void SwerveDrive::computeModuleVoltages(double dt) {
-    for (size_t i = 0; i < modules.size(); ++i) {
+void SwerveDrive::computeModuleVoltages(double dt)
+{
+    for (size_t i = 0; i < modules.size(); ++i)
+    {
         Physics::Vector2 r = config.modules[i].position;
         Physics::Vector2 v_rot(-r.y, r.x);
         Physics::Vector2 v_mod(m_inputVx, m_inputVy);
@@ -151,38 +157,40 @@ void SwerveDrive::computeModuleVoltages(double dt) {
         double desSpeed = v_mod.magnitude();
         double desAngle = m_lastDesAngle[i];
 
-        // DEAD BAND & ANGLE LATCHING:
-        // Only update steering angle if we are actually trying to move.
-        // Prevents jitter where modules snap to 0 deg when robot stops.
-        if (desSpeed > Constants::SteerPID::ANGLE_DEADBAND) {
+        if (desSpeed > Constants::SteerPID::ANGLE_DEADBAND)
+        {
             desAngle = std::atan2(v_mod.y, v_mod.x);
             m_lastDesAngle[i] = desAngle;
         }
 
         double curAngle = modules[i].getState().steerAngle;
 
-        // Standard Swerve Optimization (find shortest path)
         double delta = desAngle - curAngle;
-        while (delta > M_PI) delta -= 2 * M_PI;
-        while (delta < -M_PI) delta += 2 * M_PI;
+        while (delta > M_PI)
+            delta -= 2 * M_PI;
+        while (delta < -M_PI)
+            delta += 2 * M_PI;
 
-        if (std::abs(delta) > M_PI / 2.0) {
+        if (std::abs(delta) > M_PI / 2.0)
+        {
             desAngle += M_PI;
             desSpeed *= -1.0;
         }
 
         double error = desAngle - curAngle;
-        while (error > M_PI) error -= 2 * M_PI;
-        while (error < -M_PI) error += 2 * M_PI;
+        while (error > M_PI)
+            error -= 2 * M_PI;
+        while (error < -M_PI)
+            error += 2 * M_PI;
 
-        // Steering PID output (limits/deadband handled in PIDController)
+        // Steering PID
         double steerV = m_steerPIDs[i].calculate(error, dt);
 
         // Drive Velocity Feedforward + PID
         double curSpeed = modules[i].getState().wheelSpeed;
         double ffSign = (desSpeed > 0.01) ? 1.0 : ((desSpeed < -0.01) ? -1.0 : 0.0);
         double feedforward = ffSign * Constants::DrivePID::kS + Constants::DrivePID::kV * desSpeed;
-        
+
         double driveV = feedforward + m_drivePIDs[i].calculate(desSpeed - curSpeed, dt);
         driveV = std::clamp(driveV, -Constants::DrivePID::MAX_VOLTAGE, Constants::DrivePID::MAX_VOLTAGE);
 
@@ -190,92 +198,80 @@ void SwerveDrive::computeModuleVoltages(double dt) {
     }
 }
 
-void SwerveDrive::update(double dt) {
+void SwerveDrive::update(double dt)
+{
     computeModuleVoltages(dt);
     update(dt, m_computedControls);
 }
 
-void SwerveDrive::update(double dt, const std::vector<std::pair<double, double>>& controls) {
+void SwerveDrive::update(double dt, const std::vector<std::pair<double, double>> &controls)
+{
     Physics::Vector2 netForce(0, 0);
     double netTorque = 0;
 
-    // Robot Frame Velocity
-    // Convert Field Relative Velocity to Robot Relative for the modules?
-    // Actually, SwerveModule::update expects "Velocity of module AT FLOOR".
-    // This is easier to calculate in Field Relative Frame, then rotate forces if needed.
-    // Let's stay in Field Frame for forces, then updating Pose is easy.
-    
-    // BUT the modules rotate with the robot. The steer angle is usually robot-relative.
-    // Let's assume SwerveModule State.steerAngle is ROBOT RELATIVE (standard FRC).
-    // So we need to compute world-vectors for wheel direction.
-
-    for (size_t i = 0; i < modules.size(); ++i) {
+    for (size_t i = 0; i < modules.size(); ++i)
+    {
         // Calculate Module Velocity in World Frame
         // V_mod_world = V_robot_world + Omega x R_world
-        
         Physics::Vector2 r_robot = config.modules[i].position;
         Physics::Vector2 r_world = r_robot.rotate(state.pose.rotation);
-        
-        Physics::Vector2 tangential(-r_world.y, r_world.x); // Perpendicular to radius
+
+        Physics::Vector2 tangential(-r_world.y, r_world.x);
         Physics::Vector2 v_rot = tangential * state.angularVelocity;
-        
+
         Physics::Vector2 v_module_world = state.velocity + v_rot;
 
-        // SwerveModule Update
-        // We pass velocity in ROBOT frame to the module? 
-        // No, my implementation of SwerveModule physics uses Vectors. 
-        // If we pass v_module_world, we must transform the wheel angle to world frame too.
-        
-        // Let's do everything in ROBOT FRAME for the module calculation to match FRC intuition.
         // Transform module velocity to Robot Frame.
         Physics::Vector2 v_module_robot = v_module_world.rotate(-state.pose.rotation);
-        
+
         double driveV = controls[i].first;
         double steerV = controls[i].second;
 
         // Force returned is attached to chassis, in Robot Frame
         Physics::Vector2 force_robot = modules[i].update(dt, driveV, steerV, v_module_robot);
-        
+
         // Convert Force to World Frame to integrate position
         Physics::Vector2 force_world = force_robot.rotate(state.pose.rotation);
-        
+
         netForce = netForce + force_world;
-        
-        // Torque = r x F
+
+        // Torque = r * F
         // in 2D, Cross Product is (rx * Fy - ry * Fx)
-        // Calculated in Robot Frame is easiest
         netTorque += (r_robot.x * force_robot.y - r_robot.y * force_robot.x);
 
         static int printCounter = 0;
         printCounter++;
-        if (printCounter % 200 == 0) {
-            std::cout << "    [PHYSICS] Mod " << i << " force_robot: (" << force_robot.x << ", " << force_robot.y 
+        if (printCounter % 200 == 0)
+        {
+            std::cout << "    [PHYSICS] Mod " << i << " force_robot: (" << force_robot.x << ", " << force_robot.y
                       << ") | v_module_robot: (" << v_module_robot.x << ", " << v_module_robot.y << ")\n";
         }
     }
 
     static int printCounterChassis = 0;
     printCounterChassis++;
-    if (printCounterChassis % 50 == 0) {
-        std::cout << "    [CHASSIS] NetForce: (" << netForce.x << ", " << netForce.y 
+    if (printCounterChassis % 50 == 0)
+    {
+        std::cout << "    [CHASSIS] NetForce: (" << netForce.x << ", " << netForce.y
                   << ") | NetTorque: " << netTorque << "\n";
     }
 
-    // F = ma -> a = F/m
+    // a = F/m
     Physics::Vector2 acceleration = netForce / config.mass;
-    
-    // Tau = Ia -> alpha = Tau/I
+
+    // alpha = Tau/I
     double angularAccel = netTorque / config.moi;
 
-    // Symplectic Euler Integration (or semi-implicit)
     state.velocity = state.velocity + acceleration * dt;
     state.angularVelocity += angularAccel * dt;
 
     // Damping / Friction to settle at rest
-    state.velocity = state.velocity * 0.98; 
+    state.velocity = state.velocity * 0.98;
     state.angularVelocity *= 0.98;
-    if (state.velocity.magnitude() < 0.001) state.velocity = {0,0};
-    if (std::abs(state.angularVelocity) < 0.001) state.angularVelocity = 0;
+    if (state.velocity.magnitude() < 0.001)
+        state.velocity = {0, 0};
+    if (std::abs(state.angularVelocity) < 0.001)
+        state.angularVelocity = 0;
 
     state.pose.position = state.pose.position + state.velocity * dt;
     state.pose.rotation += state.angularVelocity * dt;

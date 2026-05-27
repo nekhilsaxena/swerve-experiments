@@ -8,10 +8,11 @@
 #include <memory>
 #include <string>
 
-class DriveToPoseCommand : public Command {
+class DriveToPoseCommand : public Command
+{
 public:
-    DriveToPoseCommand(SwerveDrive* robot, SwerveDriveUtil* driveUtil, 
-                       Physics::Vector2 targetPos, double targetHeading, 
+    DriveToPoseCommand(SwerveDrive *robot, SwerveDriveUtil *driveUtil,
+                       Physics::Vector2 targetPos, double targetHeading,
                        double posTolerance = 0.15, double headingTolerance = 0.05);
 
     void initialize() override;
@@ -23,8 +24,8 @@ public:
     std::string getStatus() const override;
 
 private:
-    SwerveDrive* m_robot;
-    SwerveDriveUtil* m_driveUtil;
+    SwerveDrive *m_robot;
+    SwerveDriveUtil *m_driveUtil;
     Physics::Vector2 m_targetPos;
     double m_targetHeading;
     double m_posTolerance;
@@ -32,9 +33,10 @@ private:
     double m_initialDistance;
 };
 
-class RotateToHeadingCommand : public Command {
+class RotateToHeadingCommand : public Command
+{
 public:
-    RotateToHeadingCommand(SwerveDrive* robot, SwerveDriveUtil* driveUtil, 
+    RotateToHeadingCommand(SwerveDrive *robot, SwerveDriveUtil *driveUtil,
                            double targetHeading, double headingTolerance = 0.05);
 
     void initialize() override;
@@ -46,16 +48,17 @@ public:
     std::string getStatus() const override;
 
 private:
-    SwerveDrive* m_robot;
-    SwerveDriveUtil* m_driveUtil;
+    SwerveDrive *m_robot;
+    SwerveDriveUtil *m_driveUtil;
     double m_targetHeading;
     double m_headingTolerance;
     double m_initialAngleError;
 };
 
-class FollowPathCommand : public Command {
+class FollowPathCommand : public Command
+{
 public:
-    FollowPathCommand(SwerveDrive* robot, SwerveDriveUtil* driveUtil, 
+    FollowPathCommand(SwerveDrive *robot, SwerveDriveUtil *driveUtil,
                       std::vector<AutonWaypoint> waypoints);
 
     void initialize() override;
@@ -67,15 +70,16 @@ public:
     std::string getStatus() const override;
 
 private:
-    SwerveDrive* m_robot;
-    SwerveDriveUtil* m_driveUtil;
+    SwerveDrive *m_robot;
+    SwerveDriveUtil *m_driveUtil;
     std::vector<AutonWaypoint> m_waypoints;
     size_t m_currentIdx{0};
 
     void submitRequestForWaypoint(size_t idx);
 };
 
-class WaitCommand : public Command {
+class WaitCommand : public Command
+{
 public:
     explicit WaitCommand(double durationSeconds);
 
@@ -92,7 +96,8 @@ private:
     double m_elapsed{0.0};
 };
 
-class SequentialCommandGroup : public Command {
+class SequentialCommandGroup : public Command
+{
 public:
     SequentialCommandGroup() = default;
     explicit SequentialCommandGroup(std::vector<std::shared_ptr<Command>> commands);

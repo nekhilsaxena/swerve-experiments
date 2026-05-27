@@ -8,20 +8,25 @@
 #define M_PI 3.14159265358979323846
 #endif
 
-// Helper math functions for command tolerance checking
-inline double angleError(double current, double target) {
+// Teeny tiny helper math functions for command tolerance checking
+inline double angleError(double current, double target)
+{
     double error = target - current;
-    while (error > M_PI) error -= 2 * M_PI;
-    while (error < -M_PI) error += 2 * M_PI;
+    while (error > M_PI)
+        error -= 2 * M_PI;
+    while (error < -M_PI)
+        error += 2 * M_PI;
     return error;
 }
 
-inline double distance(const Physics::Vector2& a, const Physics::Vector2& b) {
+inline double distance(const Physics::Vector2 &a, const Physics::Vector2 &b)
+{
     Physics::Vector2 diff = b - a;
     return diff.magnitude();
 }
 
-class Command {
+class Command
+{
 public:
     virtual ~Command() = default;
 

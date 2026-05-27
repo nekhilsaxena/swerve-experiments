@@ -35,10 +35,11 @@ namespace Constants
         inline constexpr double STEER_GEAR_RATIO = 26.09; // Motor rotations per module rotation
         inline constexpr double WHEEL_RADIUS_M = 0.0508;  // 4-inch wheel
         inline constexpr double MASS_ON_WHEEL_KG = Robot::MASS_KG / 4.0;
-        inline constexpr double WHEEL_MOI = 0.005;    // kg m^2
-        inline constexpr double MODULE_MOI = 0.05;    // kg m^2
-        inline constexpr double COEFF_FRICTION = 1.1; // Traction coefficient (mu)
-        inline constexpr double STEER_FRICTION = 0.1; // Steering resistance (N·m·s/rad)
+        inline constexpr double WHEEL_MOI = 0.005;         // kg m^2
+        inline constexpr double MODULE_MOI = 0.05;         // kg m^2
+        inline constexpr double COEFF_FRICTION = 1.1;      // Traction coefficient (mu)
+        inline constexpr double STEER_FRICTION = 0.1;      // Steering resistance (N*m*s/rad)
+        inline constexpr double WHEEL_TRACTION = 5000.0; // Wheel traction coefficient (N)
     }
 
     // Steer Angle PID
@@ -47,22 +48,22 @@ namespace Constants
         inline constexpr double kP = 25.0;
         inline constexpr double kI = 0.0;
         inline constexpr double kD = 0.1;
-        inline constexpr double MAX_VOLTAGE = 12.0;    // Output clamp (V)
-        inline constexpr double DEADBAND = 0.05;       // Ignore outputs below this (V)
-        inline constexpr double ANGLE_DEADBAND = 0.01; // Don't update angle below this speed (m/s)
+        inline constexpr double MAX_VOLTAGE = 12.0;
+        inline constexpr double DEADBAND = 0.05;
+        inline constexpr double ANGLE_DEADBAND = 0.01;
     }
 
     // Drive Velocity PID + Feedforward
     namespace DrivePID
     {
-        inline constexpr double kS = 0.1;           // Static friction voltage (V)
-        inline constexpr double kV = 2.8;           // Velocity feedforward (V / m/s)
-        inline constexpr double kA = 0.0;           // Acceleration feedforward (V / m/s²)
-        inline constexpr double kP = 0.5;           // Error proportional gain (tuned up from 0.5)
-        inline constexpr double kI = 0.0;           // Integral gain
-        inline constexpr double kD = 0.0;           // Derivative gain
-        inline constexpr double MAX_VOLTAGE = 12.0; // Output clamp (V)
-        inline constexpr double DEADBAND = 0.1;     // Ignore outputs below this (V)
+        inline constexpr double kS = 0.1;
+        inline constexpr double kV = 2.8;
+        inline constexpr double kA = 0.0;
+        inline constexpr double kP = 0.5;
+        inline constexpr double kI = 0.0;
+        inline constexpr double kD = 0.0;
+        inline constexpr double MAX_VOLTAGE = 12.0;
+        inline constexpr double DEADBAND = 0.1;
     }
 
     // Heading PID
@@ -71,18 +72,18 @@ namespace Constants
         inline constexpr double kP = 7.0;
         inline constexpr double kI = 0.2;
         inline constexpr double kD = 0.3;
-        inline constexpr double MAX_OMEGA_RADS = 3.0; // Clamp on output (rad/s)
-        inline constexpr double DEADBAND_RAD = 0.01;  // Ignore error below this (rad)
+        inline constexpr double MAX_OMEGA_RADS = 3.0;
+        inline constexpr double DEADBAND_RAD = 0.01;
     }
 
     // Position PID
     namespace PositionPID
     {
-        inline constexpr double kP = 5.5; // Error proportional gain (tuned down from 8.0 for smoother approach)
-        inline constexpr double kI = 0.1;
-        inline constexpr double kD = 0.0;            // Derivative gain (added for active damping/braking)
-        inline constexpr double MAX_SPEED_MPS = 3.0; // Clamp on translation speed output (m/s)
-        inline constexpr double DEADBAND_M = 0.0;    // Position error deadband (tuned down from 0.1 for high precision)
+        inline constexpr double kP = 10.0;
+        inline constexpr double kI = 0.0;
+        inline constexpr double kD = 0.7;
+        inline constexpr double MAX_SPEED_MPS = 7.0;
+        inline constexpr double DEADBAND_M = 0.0;
     }
 
     // Simulation / Visualizer

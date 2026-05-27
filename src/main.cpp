@@ -1,6 +1,7 @@
 #define OLC_PGE_APPLICATION
 #include "olcPixelGameEngine.h"
 #define _USE_MATH_DEFINES
+#include <deque>
 #include <cmath>
 #include <vector>
 #include <string>
@@ -21,7 +22,8 @@
 using namespace Physics;
 
 // Dashboard Button Helper
-struct Button {
+struct Button
+{
     int x;
     int y;
     int w;
@@ -31,13 +33,16 @@ struct Button {
     olc::Pixel hoverColor{90, 90, 90};
     olc::Pixel activeColor{130, 130, 130};
 
-    bool isHovered(int mx, int my) const {
+    bool isHovered(int mx, int my) const
+    {
         return mx >= x && mx < x + w && my >= y && my < y + h;
     }
 
-    void draw(olc::PixelGameEngine* pge, int mx, int my, bool isPressed) const {
+    void draw(olc::PixelGameEngine *pge, int mx, int my, bool isPressed) const
+    {
         olc::Pixel color = normalColor;
-        if (isHovered(mx, my)) {
+        if (isHovered(mx, my))
+        {
             color = isPressed ? activeColor : hoverColor;
         }
         pge->FillRect(x, y, w, h, color);
@@ -63,6 +68,12 @@ private:
     std::unique_ptr<SwerveDriveUtil> driveUtil;
 
     float fScale = Constants::Simulation::SCALE_PX_PER_M;
+    // Trail of robot positions for visualizing trajectory
+    std::deque<Physics::Vector2> robotTrail;
+    const size_t kMaxTrailSize = 200;
+    // Start position for the first waypoint (captured once per routine)
+    Physics::Vector2 startWaypointPos;
+    bool startWaypointCaptured = false;
     olc::vf2d vOffset = {400, 400};
     float fSimStep = (float)Constants::Simulation::PHYSICS_DT;
 
@@ -86,11 +97,10 @@ public:
 
         // Dashboard buttons (Row 1: S-Curve & Square, Row 2: P2P & Cancel)
         buttons = {
-            { 820, 580, 170, 32, "S-Curve Auton" },
-            { 1005, 580, 170, 32, "Square Auton" },
-            { 820, 625, 170, 32, "P2P Auton" },
-            { 1005, 625, 170, 32, "Cancel Auton" }
-        };
+            {820, 580, 170, 32, "ZigZag Auton"},
+            {1005, 580, 170, 32, "Square Auton"},
+            {820, 625, 170, 32, "P2P Auton"},
+            {1005, 625, 170, 32, "Cancel Auton"}};
 
         return true;
     }
@@ -103,16 +113,42 @@ public:
         float rotSpeed = Constants::Simulation::ROTATE_SPEED_RADS;
 
         bool teleopInputActive = false;
-        if (GetKey(olc::Key::UP).bHeld) { targetVx += speed; teleopInputActive = true; }
-        if (GetKey(olc::Key::DOWN).bHeld) { targetVx -= speed; teleopInputActive = true; }
-        if (GetKey(olc::Key::LEFT).bHeld) { targetVy += speed; teleopInputActive = true; }
-        if (GetKey(olc::Key::RIGHT).bHeld) { targetVy -= speed; teleopInputActive = true; }
-        if (GetKey(olc::Key::Q).bHeld) { targetOmega += rotSpeed; teleopInputActive = true; }
-        if (GetKey(olc::Key::E).bHeld) { targetOmega -= rotSpeed; teleopInputActive = true; }
+        if (GetKey(olc::Key::UP).bHeld || GetKey(olc::Key::W).bHeld)
+        {
+            targetVx += speed;
+            teleopInputActive = true;
+        }
+        if (GetKey(olc::Key::DOWN).bHeld || GetKey(olc::Key::S).bHeld)
+        {
+            targetVx -= speed;
+            teleopInputActive = true;
+        }
+        if (GetKey(olc::Key::LEFT).bHeld || GetKey(olc::Key::A).bHeld)
+        {
+            targetVy += speed;
+            teleopInputActive = true;
+        }
+        if (GetKey(olc::Key::RIGHT).bHeld || GetKey(olc::Key::D).bHeld)
+        {
+            targetVy -= speed;
+            teleopInputActive = true;
+        }
+        if (GetKey(olc::Key::Q).bHeld)
+        {
+            targetOmega += rotSpeed;
+            teleopInputActive = true;
+        }
+        if (GetKey(olc::Key::E).bHeld)
+        {
+            targetOmega -= rotSpeed;
+            teleopInputActive = true;
+        }
 
         // If manual controls are touched, cancel running commands
-        if (teleopInputActive) {
-            if (clickTarget.has_value()) {
+        if (teleopInputActive)
+        {
+            if (clickTarget.has_value())
+            {
                 clickTarget = std::nullopt;
                 driveUtil->resetToIdle();
             }
@@ -122,7 +158,7 @@ public:
             m_activeAutonName = "None";
         }
 
-        // Emergency stop — also cancels autonomous and target PID
+        // Emergency stop
         if (GetKey(olc::Key::X).bPressed)
         {
             CommandScheduler::getInstance().cancelAll();
@@ -134,44 +170,57 @@ public:
         }
 
         // Handle Dashboard Button Clicks
-        if (GetMouse(0).bPressed) {
+        if (GetMouse(0).bPressed)
+        {
             int mx = GetMouseX();
             int my = GetMouseY();
-            for (size_t i = 0; i < buttons.size(); i++) {
-                if (buttons[i].isHovered(mx, my)) {
-                    clickTarget = std::nullopt; // Clear target click if starting auton
+            std::cout << "[DEBUG] Mouse Click in meters at (" << (mx / Constants::Simulation::SCALE_PX_PER_M) << ", " << (my / Constants::Simulation::SCALE_PX_PER_M) << ")\n";
+
+            for (size_t i = 0; i < buttons.size(); i++)
+            {
+                if (buttons[i].isHovered(mx, my))
+                {
+                    clickTarget = std::nullopt;
                     CommandScheduler::getInstance().cancelAll();
                     m_activeAutonCommand.reset();
                     m_activeWaypoints.clear();
                     m_activeAutonName = "None";
 
-                    if (i == 0) {
-                        auto r = std::make_unique<SCurveRoutine>();
+                    if (i == 0)
+                    {
+                        auto r = std::make_unique<ZigZagRoutine>();
                         m_activeAutonName = r->getName();
                         m_activeWaypoints = r->getWaypoints();
                         m_activeAutonCommand = r->getCommand(robot.get(), driveUtil.get());
                         CommandScheduler::getInstance().schedule(m_activeAutonCommand);
-                    } else if (i == 1) {
+                    }
+                    else if (i == 1)
+                    {
                         auto r = std::make_unique<SquareRoutine>();
                         m_activeAutonName = r->getName();
                         m_activeWaypoints = r->getWaypoints();
                         m_activeAutonCommand = r->getCommand(robot.get(), driveUtil.get());
                         CommandScheduler::getInstance().schedule(m_activeAutonCommand);
-                    } else if (i == 2) {
+                    }
+                    else if (i == 2)
+                    {
                         auto r = std::make_unique<PointToPointRoutine>();
                         m_activeAutonName = r->getName();
                         m_activeWaypoints = r->getWaypoints();
                         m_activeAutonCommand = r->getCommand(robot.get(), driveUtil.get());
                         CommandScheduler::getInstance().schedule(m_activeAutonCommand);
-                    } else if (i == 3) {
+                    }
+                    else if (i == 3)
+                    {
                         driveUtil->resetToIdle();
                     }
                 }
             }
         }
 
-        // Right Click on Grid to PID — store target
-        if (GetMouse(1).bPressed && GetMouseX() <= 800) {
+        // Right Click on Grid to PID
+        if (GetMouse(1).bPressed && GetMouseX() <= 800)
+        {
             CommandScheduler::getInstance().cancelAll();
             m_activeAutonCommand.reset();
             m_activeWaypoints.clear();
@@ -186,20 +235,24 @@ public:
         //   1. Auton (handled via command scheduler running in physics loop)
         //   2. Click-target PID
         //   3. Teleop
-        if (!CommandScheduler::getInstance().hasActiveCommands()) {
-            if (clickTarget.has_value()) {
+        if (!CommandScheduler::getInstance().hasActiveCommands())
+        {
+            if (clickTarget.has_value())
+            {
                 DriveRequest req;
-                req.mode            = DriveMode::TARGET_POSE;
-                req.priority        = RequestPriority::ALIGNMENT;
-                req.translation     = {0, 0};
-                req.rotation        = 0;
-                req.targetPosition  = clickTarget;
-                req.targetHeading   = clickTargetHeading;
+                req.mode = DriveMode::TARGET_POSE;
+                req.priority = RequestPriority::ALIGNMENT;
+                req.translation = {0, 0};
+                req.rotation = 0;
+                req.targetPosition = clickTarget;
+                req.targetHeading = clickTargetHeading;
                 req.rampTimeSeconds = 0.0;
-                req.source          = "GRID_CLICK";
-                req.isActive        = true;
+                req.source = "GRID_CLICK";
+                req.isActive = true;
                 driveUtil->submitRequest(req);
-            } else {
+            }
+            else
+            {
                 driveUtil->submitRequest(DriveRequest::teleop(targetVx, targetVy, targetOmega));
             }
         }
@@ -208,7 +261,7 @@ public:
         static float fAccumulator = 0.0f;
         fAccumulator += fElapsedTime;
 
-        // Caps to prevent "Spiral of Death"
+        // Caps to prevent da Spiral of Death
         if (fAccumulator > Constants::Simulation::MAX_ACCUMULATOR)
         {
             fAccumulator = Constants::Simulation::MAX_ACCUMULATOR;
@@ -219,8 +272,9 @@ public:
             // Update scheduled commands
             CommandScheduler::getInstance().run(fSimStep);
 
-            // Clean up visual references if command group finished
-            if (m_activeAutonCommand && !CommandScheduler::getInstance().hasActiveCommands()) {
+            // Clean up visual references if command group finishes
+            if (m_activeAutonCommand && !CommandScheduler::getInstance().hasActiveCommands())
+            {
                 m_activeAutonCommand.reset();
                 m_activeWaypoints.clear();
                 m_activeAutonName = "None";
@@ -228,6 +282,9 @@ public:
 
             driveUtil->update(fSimStep);
             robot->update(fSimStep);
+            // Record robot position for trail
+            robotTrail.push_back(robot->getState().pose.position);
+            if (robotTrail.size() > kMaxTrailSize) robotTrail.pop_front();
 
             static int debugCounter = 0;
             debugCounter++;
@@ -241,22 +298,16 @@ public:
             fAccumulator -= fSimStep;
         }
 
-        // DRAWING
+        // Drawing
         Clear(olc::Pixel(20, 20, 20));
 
-        // 1. Grid
         for (int x = 0; x <= 800; x += (int)fScale)
             DrawLine(x, 0, x, ScreenHeight(), olc::Pixel(45, 45, 45));
         for (int y = 0; y <= ScreenHeight(); y += (int)fScale)
             DrawLine(0, y, 800, y, olc::Pixel(45, 45, 45));
 
-        // 2. Waypoints / Paths / Targets
         DrawAutonPathAndTarget();
-
-        // 3. Robot
         DrawRobot();
-
-        // 4. UI Dashboard
         DrawDashboard();
 
         return true;
@@ -265,42 +316,92 @@ public:
 private:
     void DrawRobot()
     {
+        // Draw robot trajectory trail (behind robot)
+        if (robotTrail.size() > 1) {
+            size_t idx = 0;
+            for (auto it = robotTrail.begin(); std::next(it) != robotTrail.end(); ++it, ++idx) {
+                const auto& p1 = *it;
+                const auto& p2 = *std::next(it);
+                int x1 = p1.x * fScale + vOffset.x;
+                int y1 = -p1.y * fScale + vOffset.y;
+                int x2 = p2.x * fScale + vOffset.x;
+                int y2 = -p2.y * fScale + vOffset.y;
+                uint8_t alpha = static_cast<uint8_t>(255 * (static_cast<float>(idx) / robotTrail.size()));
+                olc::Pixel trailColor = olc::Pixel(0, 255, 0, alpha);
+                DrawLine(x1, y1, x2, y2, trailColor);
+            }
+        }
+        // Draw robot on top of trail
         robot->draw(this, fScale, vOffset);
     }
 
+
     void DrawAutonPathAndTarget()
     {
-        // Draw right-click target position
-        if (clickTarget.has_value()) {
+        if (!m_activeWaypoints.empty())
+        {
+            if (!startWaypointCaptured)
+            {
+                startWaypointPos = robot->getState().pose.position;
+                startWaypointCaptured = true;
+            }
+            // Convert stored start position to screen coordinates
+            int robotScreenX = startWaypointPos.x * fScale + vOffset.x;
+            int robotScreenY = -startWaypointPos.y * fScale + vOffset.y;
+
+            for (size_t i = 0; i < m_activeWaypoints.size(); i++)
+            {
+                int wx, wy;
+                if (i == 0) {
+                    wx = robotScreenX;
+                    wy = robotScreenY;
+                } else {
+                    wx = m_activeWaypoints[i].position.x * fScale + vOffset.x;
+                    wy = -m_activeWaypoints[i].position.y * fScale + vOffset.y;
+                }
+
+                // Waypoint nodes (different color for start)
+                if (i == 0) {
+                    FillCircle(wx, wy, 5, olc::Pixel(0, 255, 0)); // bright green start marker
+                    DrawCircle(wx, wy, 10, olc::Pixel(0, 255, 0));
+                    DrawString(wx + 12, wy - 12, "W0", olc::Pixel(0, 255, 0));
+                } else {
+                    FillCircle(wx, wy, 4, olc::Pixel(255, 165, 0)); // orange/tangerine
+                    DrawCircle(wx, wy, 8, olc::Pixel(255, 165, 0));
+                    DrawString(wx + 10, wy - 10, "W" + std::to_string(i), olc::Pixel(255, 165, 0));
+                }
+
+                // Line connecting to next waypoint
+                if (i < m_activeWaypoints.size() - 1)
+                {
+                    int nwx = m_activeWaypoints[i + 1].position.x * fScale + vOffset.x;
+                    int nwy = -m_activeWaypoints[i + 1].position.y * fScale + vOffset.y;
+                    DrawLine(wx, wy, nwx, nwy, olc::Pixel(255, 165, 0, 100));
+                }
+            }
+        }
+        else
+        {
+            startWaypointCaptured = false;
+        }
+
+        // right-click target position
+        if (clickTarget.has_value())
+        {
             int tx = clickTarget->x * fScale + vOffset.x;
             int ty = -clickTarget->y * fScale + vOffset.y;
-            
+
             // Glowing cyan crosshair and target circles
             DrawCircle(tx, ty, 6, olc::CYAN);
             DrawCircle(tx, ty, 2, olc::CYAN);
             DrawLine(tx - 10, ty, tx + 10, ty, olc::CYAN);
             DrawLine(tx, ty - 10, tx, ty + 10, olc::CYAN);
             DrawString(tx + 12, ty - 12, "TARGET", olc::CYAN);
-        }
 
-        // Draw autonomous waypoints and paths
-        if (!m_activeWaypoints.empty()) {
-            for (size_t i = 0; i < m_activeWaypoints.size(); i++) {
-                int wx = m_activeWaypoints[i].position.x * fScale + vOffset.x;
-                int wy = -m_activeWaypoints[i].position.y * fScale + vOffset.y;
-                
-                // Waypoint nodes
-                FillCircle(wx, wy, 4, olc::Pixel(255, 165, 0)); // orange/tangerine
-                DrawCircle(wx, wy, 8, olc::Pixel(255, 165, 0));
-                DrawString(wx + 10, wy - 10, "W" + std::to_string(i), olc::Pixel(255, 165, 0));
-
-                // Line connecting to next waypoint
-                if (i < m_activeWaypoints.size() - 1) {
-                    int nwx = m_activeWaypoints[i+1].position.x * fScale + vOffset.x;
-                    int nwy = -m_activeWaypoints[i+1].position.y * fScale + vOffset.y;
-                    DrawLine(wx, wy, nwx, nwy, olc::Pixel(255, 165, 0, 100)); // semi-transparent
-                }
-            }
+            const auto& robotPos = robot->getState().pose.position;
+            int rx = robotPos.x * fScale + vOffset.x;
+            int ry = -robotPos.y * fScale + vOffset.y;
+            DrawLine(rx, ry, tx, ty, olc::Pixel(0, 255, 255, 120));
         }
     }
 
@@ -346,9 +447,10 @@ private:
         bool running = (m_activeAutonCommand != nullptr);
         olc::Pixel autoColor = running ? olc::Pixel(120, 255, 120) : olc::Pixel(120, 120, 120);
         DrawString(x, 480, "Autonomous & Control UI:", olc::Pixel(255, 200, 80));
-        
+
         std::string statusStr = "None";
-        if (running) {
+        if (running)
+        {
             statusStr = m_activeAutonName + " [" + m_activeAutonCommand->getStatus() + "]";
         }
         DrawString(x, 500, "Routine: " + statusStr, autoColor);
@@ -365,11 +467,12 @@ private:
             FillRect(barX + 1, barY + 1, static_cast<int>(barW * progress), barH - 1, autoColor);
         }
 
-        // Draw buttons
+        // buttons
         int mx = GetMouseX();
         int my = GetMouseY();
         bool isPressed = GetMouse(0).bHeld;
-        for (const auto& btn : buttons) {
+        for (const auto &btn : buttons)
+        {
             btn.draw(this, mx, my, isPressed);
         }
     }
